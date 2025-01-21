@@ -1,0 +1,344 @@
+---
+title: "Project"
+author: "Manasa"
+date: "2024-03-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE,echo = TRUE)
+```
+
+## R Markdown
+
+```{r cars}
+if (!requireNamespace("readr", quietly = TRUE)) install.packages("readr")
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!requireNamespace("tidyr", quietly = TRUE)) install.packages("tidyr")
+if (!requireNamespace("lubridate", quietly = TRUE)) install.packages("lubridate")
+
+#Load the libraries
+library(lubridate)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+crd <- read_csv("/Users/manasavishnumoorthy/Desktop/IDMP/CRD.csv", 
+                 na = c("", "NA", " "), show_col_types = FALSE)
+
+incident <- read_csv("/Users/manasavishnumoorthy/Desktop/IDMP/incidents_data.csv", 
+                 na = c("", "NA", " "), show_col_types = FALSE)
+
+non_motorists <- read_csv("/Users/manasavishnumoorthy/Desktop/IDMP/non_motorist_data.csv", 
+                 na = c("", "NA", " "), show_col_types = FALSE)
+
+#Convert 'Local Case Number' to character in all data frames
+crd$`Local Case Number` <- as.character(crd$`Local Case Number`)
+non_motorists$`Local Case Number` <- as.character(non_motorists$`Local Case Number`)
+incident$`Local Case Number` <- as.character(incident$`Local Case Number`)
+
+combined_data <- crd %>%
+  full_join(non_motorists, by = c("Report Number", "Local Case Number")) %>%
+  full_join(incident, by = c("Report Number", "Local Case Number"))
+
+#Check the first few rows of the combined data
+#str(combined_data)
+
+```
+
+**Data preprocessing**
+
+**Standardize text variables:**
+Convert all character variables to lowercase for consistency.
+```{r}
+combined_data <- combined_data %>%
+  mutate(across(where(is.character), tolower))
+```
+
+**Handle missing values:**
+Replace missing values in character columns with "unknown" and in numeric columns with 0 (or another appropriate value).
+```{r}
+combined_data <- combined_data %>%
+  mutate(across(where(is.character), ~replace_na(., "unknown"))) %>%
+  mutate(across(where(is.numeric), ~replace_na(., 0)))
+
+```
+
+**Create new variables from 'Crash Date/Time':**
+Parse the 'Crash Date/Time' and extract useful components such as the date, hour, day of the week, etc.
+```{r}
+
+combined_data <- combined_data %>%
+  mutate(`Crash Date/Time` = mdy_hms(`Crash Date/Time.x`))  # Convert to date-time object
+
+# Extract components
+combined_data <- combined_data %>%
+  mutate(
+    Date = as.Date(`Crash Date/Time`),  # Extract date
+    Hour = hour(`Crash Date/Time`),  # Extract hour
+    Weekday = wday(`Crash Date/Time`, label = TRUE),  # Extract day of the week
+    Month = month(`Crash Date/Time`, label = TRUE)  # Extract month
+  )
+```
+
+```{r}
+#str(combined_data)
+```
+
+
+**Substance Abuse Factor:**
+Investigating the factor of substance abuse in collisions.
+```{r}
+combined_data$`Substance Abuse` <- ifelse(combined_data$`Driver Substance Abuse.x` != "none detected" & 
+                                          combined_data$`Driver Substance Abuse.x` != "unknown", "Yes", "No")
+
+ggplot(combined_data, aes(x = `Substance Abuse`, fill = `Substance Abuse`)) +
+  geom_bar() +
+  labs(title = "Substance Abuse Factor in Collisions", x = "Substance Abuse Involved", y = "Count")
+```
+
+**Accidents by Light Conditions and Time of Day:**
+It might be interesting to see how light conditions impact accidents, and if there are peak times.
+```{r}
+library(ggplot2)
+library(dplyr)
+
+#Filter out unwanted categories
+filtered_data <- combined_data %>%
+  filter(!Light.x %in% c("n/a", "other", "unknown"))
+
+# Count the number of accidents by light condition
+light_data <- filtered_data %>%
+  count(Light.x) %>%
+  rename(Number_of_Accidents = n)
+
+# Create a pie chart
+ggplot(light_data, aes(x = "", y = Number_of_Accidents, fill = Light.x)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +  # This makes it a pie chart
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Proportion of Accidents by Light Conditions", x = "", y = "", fill = "Light Condition") +
+  theme_void() 
+
+```
+**Heatmap of Collisions by Hour and Day of the Week**
+This visualization will help us understand when most collisions occur during the week.
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Create a column for the day of the week and hour
+combined_data$DayOfWeek <- weekdays(as.Date(combined_data$`Crash Date/Time`))
+combined_data$Hour <- format(combined_data$`Crash Date/Time`, "%H")
+
+# Prepare the data for the heatmap
+heatmap_data <- combined_data %>%
+  filter(!is.na(DayOfWeek) & DayOfWeek != "na") %>%  # Filter out the "NA" or "na" entries
+  group_by(DayOfWeek, Hour) %>%
+  summarize(Count = n(), .groups = 'drop') %>%
+  mutate(DayOfWeek = factor(DayOfWeek, levels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")))
+
+# Create the heatmap
+ggplot(heatmap_data, aes(x = Hour, y = DayOfWeek, fill = Count)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Heatmap of Collisions by Hour and Day of Week", x = "Hour of Day", y = "Day of Week") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+
+collisions_by_day_filtered <- combined_data %>%
+  filter(!is.na(DayOfWeek) & DayOfWeek != "na") %>%  # Filter out the "NA" or "na" entries
+  group_by(DayOfWeek) %>%
+  summarise(NumberOfCollisions = n(), .groups = 'drop') %>%
+  mutate(DayOfWeek = factor(DayOfWeek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")))
+
+
+ggplot(collisions_by_day_filtered, aes(x = DayOfWeek, y = NumberOfCollisions, fill = DayOfWeek)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = NumberOfCollisions), vjust = -0.3) +
+  labs(title = "Number of Collisions by Day of the Week", x = "Day of the Week", y = "Number of Collisions") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+**ARIMA**
+
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(forecast)
+library(tibble)
+library(ggplot2)
+
+
+# Convert the Crash Date/Time to a proper Date format 
+combined_data$Crash_Date <- as.Date(mdy_hms(combined_data$`Crash Date/Time.x`))
+
+# Remove rows with NA in Crash_Date 
+combined_data <- combined_data %>% 
+  filter(!is.na(Crash_Date))
+
+# Aggregate data by Crash_Date to get the number of collisions per day
+daily_collisions <- combined_data %>% 
+  group_by(Crash_Date) %>% 
+  summarise(Number_of_Collisions = n(), .groups = 'drop')
+
+# Generate the time series object from daily collision counts
+collision_ts <- ts(daily_collisions$Number_of_Collisions, frequency = 365)
+
+# Fit the ARIMA model
+fit <- auto.arima(collision_ts)
+
+# Check model summary
+summary(fit)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+
+# Ensure that the dates are in the proper Date format
+daily_collisions$Crash_Date <- as.Date(daily_collisions$Crash_Date)
+
+#Plot using ggplot2
+#ggplot(daily_collisions, aes(x = Crash_Date, y = Number_of_Collisions)) +
+# geom_line(color = "blue") +
+#  geom_smooth(method = "lm", color = "red", se = FALSE) + # Trend line
+#  labs(title = "Historical Collision Data",
+#       x = "Date",
+#       y = "Number of Collisions") +
+#  theme_minimal()
+#
+
+ggplot(daily_collisions, aes(x = Crash_Date, y = Number_of_Collisions)) +
+  geom_line(color = "blue") +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), color = "red", se = FALSE) + # Quadratic trend line
+  labs(title = "Historical Collision Data with Non-linear Trend",
+       x = "Date",
+       y = "Number of Collisions") +
+  theme_minimal()
+```
+
+```{r}
+library(forecast)
+library(ggplot2)
+
+# Forecast the next 30 days using the fitted ARIMA model
+forecast_future <- forecast(fit, h = 30)
+
+# Create a data frame for the forecast dates and predictions
+last_date <- max(daily_collisions$Crash_Date)  # Last date in your historical data
+forecast_dates <- seq.Date(from = last_date + 1, by = "day", length.out = 30)
+
+forecast_data <- data.frame(
+  Date = forecast_dates,
+  Forecast = as.numeric(forecast_future$mean),
+  Lower_80 = forecast_future$lower[, "80%"],
+  Upper_80 = forecast_future$upper[, "80%"],
+  Lower_95 = forecast_future$lower[, "95%"],
+  Upper_95 = forecast_future$upper[, "95%"]
+)
+
+
+# Plot the forecast using ggplot2
+ggplot(forecast_data, aes(x = Date)) +
+  geom_line(aes(y = Forecast), color = "red") +
+  geom_ribbon(aes(ymin = Lower_95, ymax = Upper_95), fill = "grey80", alpha = 0.2) +
+    geom_ribbon(aes(ymin = Lower_80, ymax = Upper_80), fill = "grey60", alpha = 0.4) +
+  labs(title = "30 Day Collision Forecast",
+       x = "Date",
+       y = "Forecasted Number of Collisions") +
+  theme_minimal()
+```
+
+```{r}
+
+# Time series decomposition
+decomposition <- stl(collision_ts, s.window = "periodic")
+
+# Plot decomposed components
+plot(decomposition)
+```
+
+```{r}
+# Model selection
+# Example: Fit a SARIMA model
+sarima_model <- auto.arima(collision_ts, seasonal = TRUE)
+
+# Model validation
+# Diagnostic plots
+plot(sarima_model)
+```
+
+```{r}
+# Forecasting
+forecast_values <- forecast(sarima_model, h = 30)
+
+# Evaluate forecast accuracy
+accuracy(forecast_values)
+```
+
+**Regression Analysis**
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(caret)
+
+# Assuming 'Injury Severity.x' is a factor variable indicating the severity of crashes
+# Let's encode it into numeric values for regression analysis
+combined_data$Injury_Severity_Num <- as.numeric(factor(combined_data$`Injury Severity.x`))
+
+# Selecting different variables for the regression model
+model_data <- combined_data %>%
+  select(`Injury_Severity_Num`, `Weather`, `Surface Condition`, `Light`, `Vehicle Year`, `Vehicle Make`, `Vehicle Model`)
+
+# Convert Weather, Surface_Condition, Light, Vehicle_Make, and Vehicle_Model to factors
+model_data$Weather <- as.factor(model_data$Weather)
+model_data$Surface_Condition <- as.factor(model_data$`Surface Condition`)
+model_data$Light <- as.factor(model_data$Light)
+model_data$Vehicle_Year <- as.factor(model_data$`Vehicle Year`)
+model_data$Vehicle_Make <- as.factor(model_data$`Vehicle Make`)
+model_data$Vehicle_Model <- as.factor(model_data$`Vehicle Model`)
+
+# Encoding factors into numeric values for regression analysis
+model_data <- model_data %>%
+  mutate(Weather_Num = as.numeric(Weather),
+         Surface_Condition_Num = as.numeric(Surface_Condition),
+         Light_Num = as.numeric(Light),
+         Vehicle_Make_Num = as.numeric(Vehicle_Make),
+         Vehicle_Model_Num = as.numeric(Vehicle_Model))
+
+# Perform multiple linear regression
+model <- lm(Injury_Severity_Num ~ Weather_Num + Surface_Condition_Num + Light_Num + Vehicle_Year + Vehicle_Make_Num + Vehicle_Model_Num, data = model_data)
+
+# Summary of the regression model
+summary(model)
+
+# Predictions using the model
+predictions <- predict(model)
+
+# Visualize the actual vs. predicted values
+ggplot(model_data, aes(x = predictions, y = Injury_Severity_Num)) +
+  geom_point() +
+  geom_smooth() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Predicted Injury Severity", y = "Actual Injury Severity", title = "Actual vs. Predicted Injury Severity")
+```
+
+
+
